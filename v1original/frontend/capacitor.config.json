@@ -1,0 +1,8 @@
+{
+  "appId": "com.zhiaizhulao.medicineassistant",
+  "appName": "智爱助老",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

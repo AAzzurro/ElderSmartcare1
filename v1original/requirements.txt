@@ -1,0 +1,11 @@
+gradio>=4.0.0
+zhipuai
+pillow
+pandas
+edge-tts
+sniffio
+fastapi
+uvicorn[standard]
+python-dotenv
+pydub
+python-multipart
