@@ -26,7 +26,14 @@ from core_logic import (
     nurse_toggle_taken_slot,
     tts_read,
 )
-from config import MEDICINE_DB_BY_GROUP, EVENT_DB_BY_GROUP
+from db import (
+    delete_medicine_by_index,
+    insert_event,
+    insert_medicine,
+    list_events,
+    list_medicines,
+    update_medicine_taken_by_index,
+)
 from utils import generate_ics_week, generate_calendar_events_json, get_quick_add_event
 from urllib.parse import quote
 
@@ -54,19 +61,25 @@ app.add_middleware(
 )
 
 
-def get_group_dbs(care_group_id: Optional[str]):
+def _require_care_group_id(care_group_id: Optional[str]) -> str:
     """
-    从 Header 中获取 X-Care-Group-ID，并返回该组对应的 MEDICINE_DB / EVENT_DB 子表。
-    如果是新 ID，会自动初始化为空列表。
+    从 Header 中获取 X-Care-Group-ID，并校验租户 ID。
     """
     if not care_group_id:
         raise HTTPException(status_code=400, detail="缺少 X-Care-Group-ID 请求头")
     care_group_id = care_group_id.strip()
     if not care_group_id:
         raise HTTPException(status_code=400, detail="X-Care-Group-ID 不能为空")
-    med_db = MEDICINE_DB_BY_GROUP[care_group_id]
-    event_db = EVENT_DB_BY_GROUP[care_group_id]
-    return med_db, event_db
+    return care_group_id
+
+
+def get_group_dbs(care_group_id: Optional[str]):
+    """
+    按 care_group_id 从 SQLite 读取该组用药和事件数据。
+    返回普通 list[dict]，保持旧业务逻辑和前端接口兼容。
+    """
+    group_id = _require_care_group_id(care_group_id)
+    return list_medicines(group_id), list_events(group_id, limit=None)
 
 
 # ---------- POST /api/ocr ----------
@@ -173,7 +186,9 @@ async def api_add_medicine(
         except Exception:
             box_image_path = None
 
-    med_db, _ = get_group_dbs(care_group_id)
+    group_id = _require_care_group_id(care_group_id)
+    med_db = list_medicines(group_id)
+    before_count = len(med_db)
 
     df, msg, ics_path = add_to_cabinet(
         med_db,
@@ -187,6 +202,9 @@ async def api_add_medicine(
         audio_path or "",
         box_image_path or "",
     )
+    if len(med_db) > before_count:
+        insert_medicine(group_id, med_db[-1])
+        df = get_styled_db(list_medicines(group_id))
 
     # 返回排班表为可 JSON 序列化的列表
     schedules = _dataframe_to_records(df)
@@ -469,9 +487,12 @@ async def api_elder_toggle_taken_slot(
     """
     老人端时间轴：按时段勾选已服用。
     """
-    med_db, _ = get_group_dbs(care_group_id)
-    nurse_toggle_taken_slot(str(index), time_slot, taken, med_db)
-    df = get_styled_db(med_db)
+    group_id = _require_care_group_id(care_group_id)
+    med_db = list_medicines(group_id)
+    if 0 <= index < len(med_db):
+        nurse_toggle_taken_slot(str(index), time_slot, taken, med_db)
+        update_medicine_taken_by_index(group_id, index, med_db[index].get("已服药", {}))
+    df = get_styled_db(list_medicines(group_id))
     return {"schedules": _dataframe_to_records(df)}
 
 
@@ -484,10 +505,13 @@ async def api_nurse_toggle_taken(
     """
     勾选“已发药/已服用”，更新 MEDICINE_DB（护工端：所有时段同时更新），按 care_group_id 隔离。
     """
-    med_db, _ = get_group_dbs(care_group_id)
+    group_id = _require_care_group_id(care_group_id)
+    med_db = list_medicines(group_id)
     card_md = nurse_toggle_taken(str(index), taken, med_db)
+    if 0 <= index < len(med_db):
+        update_medicine_taken_by_index(group_id, index, med_db[index].get("已服药", {}))
     # 顺带返回最新排班表，方便前端同步状态
-    df = get_styled_db(med_db)
+    df = get_styled_db(list_medicines(group_id))
     return {
         "card_markdown": card_md,
         "schedules": _dataframe_to_records(df),
@@ -504,9 +528,12 @@ async def api_nurse_toggle_taken_slot(
     """
     家属端服药情况时间轴：只更新该条记录在指定时段的已服药状态，不影响其他时段；按 care_group_id 隔离。
     """
-    med_db, _ = get_group_dbs(care_group_id)
-    nurse_toggle_taken_slot(str(index), time_slot, taken, med_db)
-    df = get_styled_db(med_db)
+    group_id = _require_care_group_id(care_group_id)
+    med_db = list_medicines(group_id)
+    if 0 <= index < len(med_db):
+        nurse_toggle_taken_slot(str(index), time_slot, taken, med_db)
+        update_medicine_taken_by_index(group_id, index, med_db[index].get("已服药", {}))
+    df = get_styled_db(list_medicines(group_id))
     return {"schedules": _dataframe_to_records(df)}
 
 
@@ -556,15 +583,11 @@ async def api_delete_medicine(
     根据排班行索引删除一条用药记录。
     返回最新的排班列表。
     """
-    med_db, _ = get_group_dbs(care_group_id)
-    if index < 0 or index >= len(med_db):
+    group_id = _require_care_group_id(care_group_id)
+    if index < 0 or not delete_medicine_by_index(group_id, index):
         raise HTTPException(status_code=404, detail="索引超出范围")
-    try:
-        med_db.pop(index)
-    except Exception:
-        raise HTTPException(status_code=500, detail="删除记录失败")
 
-    df = get_styled_db(med_db)
+    df = get_styled_db(list_medicines(group_id))
     return {
         "schedules": _dataframe_to_records(df),
     }
@@ -585,7 +608,7 @@ async def api_add_event(
     - event_type: "add_medicine"(患者添加药品), "drug_conflict"(冲突警告), "ask_doctor"(问大夫)
     - is_urgent: "1" 表示紧急（冲突警告时为 "1"，显示红色）, "0" 表示不紧急
     """
-    _, event_db = get_group_dbs(care_group_id)
+    group_id = _require_care_group_id(care_group_id)
 
     event = {
         "resident_name": resident_name.strip(),
@@ -596,7 +619,7 @@ async def api_add_event(
         "chat_content": chat_content,
         "timestamp": time.time(),
     }
-    event_db.append(event)
+    insert_event(group_id, event)
     return {"success": True, "message": "事件已记录"}
 
 
@@ -609,17 +632,9 @@ async def api_get_events(
     查询指定老人的事件列表。
     如果 resident_name 为空，返回所有事件。
     """
-    _, event_db = get_group_dbs(care_group_id)
-    if resident_name.strip():
-        events = [e for e in event_db if e.get("resident_name") == resident_name.strip()]
-    else:
-        events = event_db.copy()
-    
-    # 按时间戳倒序排列（最新的在前）
-    events.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
-    
-    # 只保留最近 50 条事件
-    return {"events": events[:50]}
+    group_id = _require_care_group_id(care_group_id)
+    events = list_events(group_id, resident_name=resident_name.strip(), limit=50)
+    return {"events": events}
 
 
 def _dataframe_to_records(df):

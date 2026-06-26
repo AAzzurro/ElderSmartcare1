@@ -178,3 +178,24 @@ npx cap open android
 - AI 能力依赖智谱 API Key，请勿把真实密钥写入代码或提交到 GitHub。
 - 前端 API 地址通过 `VITE_API_BASE` 配置，不再硬编码临时内网穿透地址。
 - 详细接口、模块和数据流可继续阅读 `ARCHITECTURE.md`。
+
+pip install -r requirements.txt
+pip install python-multipart
+
+cd /Users/azzuro/ElderSmartcare1/v1original/frontend
+npm install
+npm run build
+npx cap sync android
+
+第三步：用 Android Studio 打 APK
+安装 Android Studio
+打开工程目录：v1original/frontend/android
+等待 Gradle 同步完成
+菜单：Build → Build Bundle(s) / APK(s) → Build APK(s)
+完成后 APK 在：
+
+v1original/frontend/android/app/build/outputs/apk/debug/app-debug.apk
+
+cd /Users/azzuro/ElderSmartcare1/v1original
+source .venv/bin/activate
+uvicorn api:app --host 0.0.0.0 --port 8000

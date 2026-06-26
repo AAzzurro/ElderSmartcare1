@@ -18,6 +18,13 @@ except Exception:
 # 本项目中使用的变量名：MY_API_KEY
 API_KEY = os.environ.get("MY_API_KEY", "")
 
+# SQLite 持久化存储位置。默认放在项目 data 目录，部署时可用环境变量覆盖。
+DATA_DIR = os.environ.get("ELDERCARE_DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
+SQLITE_DB_PATH = os.environ.get(
+    "ELDERCARE_SQLITE_PATH",
+    os.path.join(DATA_DIR, "eldercare.sqlite3"),
+)
+
 # 全局数据库（模拟云端存储），用于在多个文件中共享排班数据
 # 兼容旧逻辑的单租户列表（主要被 Gradio 版使用）
 MEDICINE_DB = []
