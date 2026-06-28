@@ -3,6 +3,6 @@
   "appName": "智爱助老",
   "webDir": "dist",
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "http"
   }
 }
