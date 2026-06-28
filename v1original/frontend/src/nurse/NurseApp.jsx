@@ -51,6 +51,7 @@ import {
   fetchAddEvent,
   fetchGetEvents,
 } from "../apiClient";
+import { compressImageFile } from "../imageHelper";
 import { takePhotoWithNativeCamera } from "../cameraHelper";
 import { addRemindersToCalendar, downloadIcsReminder } from "../calendarHelper";
 
@@ -142,7 +143,8 @@ function OcrSection({ onResult }) {
     setIsLoading(true);
     setStatusText("正在拼命阅读说明书...");
     try {
-      const data = await fetchOcr({ imageFile: selectedFile, text: textInput });
+      const compressed = selectedFile ? await compressImageFile(selectedFile) : null;
+      const data = await fetchOcr({ imageFile: compressed, text: textInput });
       const nextSummary = data?.summary || "";
       const nextName = data?.name || "";
       const nextDosage = data?.dosage || "";

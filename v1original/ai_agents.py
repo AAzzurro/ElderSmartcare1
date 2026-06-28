@@ -4,7 +4,8 @@ from config import API_KEY
 import json
 import time
 import httpx  # 依然需要这个网络神器
-from utils import encode_image
+from utils import prepare_image_for_ocr
+from local_ocr import extract_text_from_image
 
 # ==========================================
 # 🛑 物理级切断代理：无视电脑上的所有“幽灵”设置
@@ -102,159 +103,166 @@ def retrieve_from_cloud_kb(query: str, top_k: int = 5):
 
 
 # ==========================================
-# 🧠 独立模块：图文解析大脑（支持自动推断时间）
+# 🧠 独立模块：图文解析大脑（本地 OCR + LLM 大白话翻译）
 # ==========================================
+def _normalize_time_list_by_dosage(dosage: str, time_list, custom_time: str):
+    """
+    在保留原有规则的前提下，让 time_list 尽量与 dosage 中的「一天几次」保持一致。
+    如说明书有“每8小时一次 / 间隔8小时”这类严格要求，则不强行干预。
+    """
+    try:
+        txt = str(dosage or "")
+        custom_txt = str(custom_time or "")
+
+        if any(k in custom_txt for k in ["每", "间隔"]) and "小时" in custom_txt:
+            return time_list
+
+        import re
+
+        n = None
+        m = re.search(r"(一[天日]|每[天日])\s*(\d+)\s*次", txt)
+        if m:
+            try:
+                n = int(m.group(2))
+            except ValueError:
+                n = None
+
+        if n is None and re.search(r"(一[天日]|每[天日]).{0,4}一次", txt):
+            n = 1
+
+        if n is None:
+            mapping = {"一": 1, "二": 2, "两": 2, "三": 3}
+            m2 = re.search(r"(一[天日]|每[天日]).{0,4}([一二两三])次", txt)
+            if m2:
+                n = mapping.get(m2.group(2))
+
+        if not n or n <= 0:
+            return time_list
+
+        if not isinstance(time_list, list):
+            time_list = ["早餐后"]
+
+        if len(time_list) == n:
+            return time_list
+
+        if len(time_list) > n:
+            return time_list[:n]
+
+        base_presets = {
+            1: ["睡前"],
+            2: ["早餐后", "晚餐后"],
+            3: ["早餐后", "午餐后", "晚餐后"],
+        }
+
+        if len(time_list) == 0 and n in base_presets:
+            return base_presets[n]
+
+        result = list(time_list)
+        last = result[-1] if result else "早餐后"
+        while len(result) < n:
+            result.append(last)
+        return result
+    except Exception:
+        return time_list
+
+
+_MEDICINE_EXTRACT_SYS_PROMPT = """
+你是一位极具同理心的三甲医院医生，专门为老年人服务。
+你的任务是阅读说明书文字，提取信息，并把晦涩的医学术语彻底翻译成“老爷爷老奶奶能听懂的大白话”！
+
+【🔴 致命警告：输出格式控制】：
+必须、只能输出一个合法的 JSON 对象，不要任何多余字符。
+
+【字段要求】：
+- "summary": 用一句通俗易懂的大白话，对药品的核心信息（名称、功效、用法、禁忌）进行整体概括。
+- "name": 真实的药名。
+- "dosage": 大白话用法！严格照一日吃几次，每次吃几片的格式。若说明书中以范围给出计量则选取中间值；毫克请尽量换算成片数。
+- "contra": 带有警告意味的禁忌！
+- "time": 根据药理学常识和说明书推断吃药时间，必须输出数组。从以下标签中挑选（不要 Emoji）：
+  ["晨起空腹", "早餐前", "早餐中", "早餐后", "午餐前", "午餐中", "午餐后",
+   "晚餐前", "晚餐中", "晚餐后", "睡前", "紧急/按需服用"]
+  标签数量与 dosage 中一日吃的次数尽量一致。
+- "custom_time": 有严格间隔或特殊时间要求时必填，否则为 ""。
+
+范例：
+{"summary": "这是降血糖药，每餐后吃半片，一天吃三次，肠胃不好千万别吃", "name": "阿卡波糖片", "dosage": "每次吃半片，一天吃三次", "contra": "肠胃不好的千万别吃！", "time": ["早餐后", "午餐后", "晚餐后"], "custom_time": ""}
+"""
+
+
 def agent_ocr_extract(image, text_input):
     if image is None and not text_input:
-        # 注意：这里返回 7 个值，新增 summary（概括）
         return "❌ 请拍摄药盒，或在文本框中输入/语音听写说明书内容", "", "", "", "", [], ""
 
-    # 【最新版】极其严苛且带有同理心的系统提示词
-    sys_prompt = """
-    你是一位极具同理心的三甲医院医生，专门为老年人服务。
-    你的任务是阅读说明书，提取信息，并把晦涩的医学术语彻底翻译成“老爷爷老奶奶能听懂的大白话”！
-    
-    【🔴 致命警告：输出格式控制】：
-    必须、只能输出一个合法的 JSON 对象，不要任何多余字符。
-    
-    【字段要求】：    - "summary": 【新增】用一句通俗易懂的大白话，对药品的核心信息（名称、功效、用法、禁忌）进行整体概括。例如："这是治疗高血压的药，每餐后吃半片，一天吃三次，肝不好不能吃"。    - "name": 真实的药名。
-    - "dosage": 大白话用法！严格照一日吃几次，每次吃几片的格式，比如“一天吃三次，每次吃半片”。若说明书中以范围给出计量则选取中间值。例：每天吃1到3片（50-150mg），可以一次吃或者分两次吃，那么 dosage 就写“一天吃两次，每次吃一片”。如果说明书中给出毫克请换算成片数。
-    - "contra": 带有警告意味的禁忌！比如“肝不好的千万别吃！”。
-    - "time": 根据药理学常识和说明书推断吃药时间。必须输出一个数组。
-      请从以下【标准医学时间库】中挑选最合适的标签（可多选），标签数量与dosage中一日吃的次数一致（注意：标签中不要添加任何 Emoji，仅使用下面的中文）：
-      ["晨起空腹", "早餐前", "早餐中", "早餐后",
-       "午餐前", "午餐中", "午餐后",
-       "晚餐前", "晚餐中", "晚餐后",
-       "睡前", "紧急/按需服用"]
-      推断规则：伤胃的药（如 NSAIDs、部分抗生素）选餐后（早餐后/午餐后/晚餐后）；作用机制特殊的药（如部分降糖药需随餐、部分需餐前）选早餐前/早餐中/早餐后等对应项；需严格遵守服药间隔（如每8小时一次）时，time 只选 ["⏳ 紧急/按需服用"]，并在 custom_time 中写清具体间隔或时间要求。
-    - "custom_time": 【重要】当说明书中有**严格或特殊**的用药时间要求时必填，否则填空字符串 ""。
-      以下情况必须填 custom_time：
-      * 按固定间隔：如"每8小时一次"、"每12小时一次"、"间隔8小时"等——此时 time 应含 "⏳ 紧急/按需服用"，custom_time 写清如"每8小时一次，需严格按时"。
-      * 与餐时严格绑定：如"空腹服用"、"晨起空腹"、"餐前1小时"、"餐前30分钟"——可在 time 中选"晨起空腹"或对应餐前/餐后，custom_time 用大白话补充说明。
-      * 其他明确时间点：如"每日清晨顿服"、"固定时间服用"等，custom_time 用一句大白话写出规则。
-    
-    范例1（普通一日三次，餐后）：
-    {"summary": "这是降血糖药，每餐后吃半片，一天吃三次，肠胃不好千万别吃", "name": "阿卡波糖片", "dosage": "每次吃半片，一天吃三次", "contra": "肠胃不好的千万别吃！", "time": ["早餐后", "午餐后", "晚餐后"], "custom_time": ""}
-    范例2（严格每8小时）：
-    {"summary": "这是消炎的抗生素，每8小时吃一次，要严格按时间吃", "name": "某抗生素", "dosage": "每次一片，每8小时一次", "contra": "无", "time": ["⏳ 紧急/按需服用"], "custom_time": "每8小时一次，需严格按时服药，不能按早中晚模糊时间"}
-    """
-
-    def _normalize_time_list_by_dosage(dosage: str, time_list, custom_time: str):
-        """
-        在保留原有规则的前提下，让 time_list 尽量与 dosage 中的「一天几次」保持一致。
-        如说明书有“每8小时一次 / 间隔8小时”这类严格要求，则不强行干预。
-        """
+    ocr_text = ""
+    if image is not None:
         try:
-            txt = str(dosage or "")
-            custom_txt = str(custom_time or "")
+            prepare_image_for_ocr(image)
+        except Exception as e:
+            print(f"⚠️ 图片预处理失败: {e}")
 
-            # custom_time 已经强调了“每X小时/间隔X小时”时，直接尊重模型输出
-            if any(k in custom_txt for k in ["每", "间隔"]) and "小时" in custom_txt:
-                return time_list
+        print("📷 阶段1：本地 OCR 识别中...")
+        t0 = time.time()
+        ocr_text = extract_text_from_image(image)
+        print(f"📝 OCR 完成，耗时 {time.time() - t0:.1f}s，字符数 {len(ocr_text)}")
 
-            import re
+        if not ocr_text.strip() and not text_input:
+            return (
+                "⚠️ 未能从图片中识别出文字，请重新拍照（尽量正对、光线充足）或手动输入",
+                "",
+                "",
+                "",
+                "",
+                [],
+                "",
+            )
 
-            n = None
+    parts = []
+    if ocr_text.strip():
+        parts.append(f"【说明书 OCR 识别内容】\n{ocr_text.strip()}")
+    if text_input:
+        parts.append(f"【用户补充信息】\n{text_input.strip()}")
+    combined_text = "\n\n".join(parts)
 
-            # 数字形式：一天3次 / 每日 2 次 / 每天1次 等
-            m = re.search(r"(一[天日]|每[天日])\s*(\d+)\s*次", txt)
-            if m:
-                try:
-                    n = int(m.group(2))
-                except ValueError:
-                    n = None
-
-            # 仅“每日一次/一天一次”等
-            if n is None and re.search(r"(一[天日]|每[天日]).{0,4}一次", txt):
-                n = 1
-
-            # 中文数字形式（常见到三次）
-            if n is None:
-                mapping = {"一": 1, "二": 2, "两": 2, "三": 3}
-                m2 = re.search(r"(一[天日]|每[天日]).{0,4}([一二两三])次", txt)
-                if m2:
-                    n = mapping.get(m2.group(2))
-
-            if not n or n <= 0:
-                return time_list
-
-            # 确保 time_list 是数组
-            if not isinstance(time_list, list):
-                time_list = ["早餐后"]
-
-            # 已经数量一致时，不动
-            if len(time_list) == n:
-                return time_list
-
-            # 太多：截断
-            if len(time_list) > n:
-                return time_list[:n]
-
-            # 不足：尝试使用预设模板或重复最后一个标签补足
-            base_presets = {
-                1: ["睡前"],
-                2: ["早餐后", "晚餐后"],
-                3: ["早餐后", "午餐后", "晚餐后"],
-            }
-
-            if len(time_list) == 0 and n in base_presets:
-                return base_presets[n]
-
-            result = list(time_list)
-            last = result[-1] if result else "早餐后"
-            while len(result) < n:
-                result.append(last)
-            return result
-        except Exception:
-            return time_list
-    
     try:
-        messages = [{"role": "system", "content": sys_prompt}]
-        user_content = []
-        
-        if text_input:
-            user_content.append({"type": "text", "text": f"用户补充的文本信息：\n{text_input}\n"})
-        else:
-            user_content.append({"type": "text", "text": "请提取图片中的药品信息。"})
-            
-        if image is not None:
-            base64_img = encode_image(image)
-            user_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}})
-            
-        messages.append({"role": "user", "content": user_content})
-        
-        # 🚨 强行升舱：没图纯文字直接上智谱最顶级的 glm-4-plus！
-        model_choice = "glm-4.6v-flashx" if image is not None else "glm-4-plus"
+        messages = [
+            {"role": "system", "content": _MEDICINE_EXTRACT_SYS_PROMPT},
+            {
+                "role": "user",
+                "content": f"请根据以下药品说明书文字，提取并翻译信息：\n\n{combined_text}",
+            },
+        ]
 
-        response = client.chat.completions.create(model=model_choice, messages=messages, temperature=0.1)
+        model_choice = "glm-4-flash"
+        print(f"🧠 阶段2：LLM 大白话翻译中（{model_choice}）...")
+        t1 = time.time()
+        response = client.chat.completions.create(
+            model=model_choice, messages=messages, temperature=0.1
+        )
+        print(f"✅ LLM 完成，耗时 {time.time() - t1:.1f}s")
+
         content = response.choices[0].message.content.strip()
-        
-        # 暴力清理 Markdown 符号
+
         if content.startswith("```json"):
             content = content[7:]
         if content.endswith("```"):
             content = content[:-3]
         content = content.strip()
-        
-        # 🐞 【CTO的抓虫日志】：在终端打印真实返回值
-        print("\n" + "="*40)
+
+        print("\n" + "=" * 40)
         print(f"🚀 调用模型: {model_choice}")
         print(f"🤖 大模型真实返回的字符串:\n{content}")
-        print("="*40 + "\n")
-        
+        print("=" * 40 + "\n")
+
         data = json.loads(content)
-        
-        # 提取时间数组；若有 custom_time 则 time 可能为空
+
         time_list = data.get("time", ["早餐后"])
         if not isinstance(time_list, list):
             time_list = ["早餐后"]
         custom_time_str = (data.get("custom_time") or "").strip()
 
-        # 在保留原有规则基础上，强制遵守「一天几次」的基础规则
         dosage_str = data.get("dosage", "")
         time_list = _normalize_time_list_by_dosage(dosage_str, time_list, custom_time_str)
 
-        # 返回 7 个值：新增 summary（概括）
         return (
             "✅ 提取成功！请在下方核对：",
             data.get("summary", ""),
@@ -264,10 +272,10 @@ def agent_ocr_extract(image, text_input):
             time_list,
             custom_time_str,
         )
-        
+
     except Exception as e:
         print(f"❌ 解析报错了: {str(e)}")
-        return f"⚠️ 提取失败，请看终端日志", "", "", "", "", [], ""
+        return "⚠️ 提取失败，请看终端日志", "", "", "", "", [], ""
 
 # ==========================================
 # 💬 独立模块：RAG 医疗问诊大脑（适配 Chatbot messages 格式）

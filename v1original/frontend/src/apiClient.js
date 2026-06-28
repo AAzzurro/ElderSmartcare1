@@ -58,7 +58,7 @@ function withCareGroupHeaders(init = {}) {
 
 export async function fetchOcr({ imageFile, text }) {
   const controller = new AbortController();
-  const timeoutMs = 60_000;
+  const timeoutMs = 120_000;
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {

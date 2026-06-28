@@ -45,6 +45,7 @@ import {
   fetchAddEvent,
 } from "../apiClient";
 import { addRemindersToCalendar, downloadIcsReminder } from "../calendarHelper";
+import { compressImageFile } from "../imageHelper";
 import { getCareGroupId } from "../apiClient";
 
 const ELDER_MODES = {
@@ -137,7 +138,8 @@ function ElderOcrInputSection({ onResult, onBack }) {
 
     setIsLoading(true);
     try {
-      const data = await fetchOcr({ imageFile: selectedFile, text: "" });
+      const compressed = await compressImageFile(selectedFile);
+      const data = await fetchOcr({ imageFile: compressed, text: "" });
       const nextSummary = data?.summary || "";
       const nextName = data?.name || "";
       const nextDosage = data?.dosage || "";

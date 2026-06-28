@@ -200,6 +200,37 @@ def encode_image(image_path):
         return base64.b64encode(image_file.read()).decode("utf-8")
 
 
+def prepare_image_for_ocr(image_path, max_side=1600, min_side=800, quality=85):
+    """
+    压缩并预处理图片，兼顾上传体积与 OCR 识别率。
+    - 过长边缩至 max_side
+    - 过短边放大至 min_side（避免小字糊掉）
+    - 统一转 JPEG
+    """
+    from PIL import Image, ImageEnhance
+
+    with Image.open(image_path) as img:
+        img = img.convert("RGB")
+        w, h = img.size
+        long_side = max(w, h)
+        short_side = min(w, h)
+
+        if long_side > max_side:
+            ratio = max_side / long_side
+            w, h = int(w * ratio), int(h * ratio)
+            img = img.resize((w, h), Image.LANCZOS)
+        elif short_side < min_side:
+            ratio = min_side / short_side
+            w, h = int(w * ratio), int(h * ratio)
+            img = img.resize((w, h), Image.LANCZOS)
+
+        # 轻微增强对比度，利于说明书小字识别
+        img = ImageEnhance.Contrast(img).enhance(1.12)
+        img = ImageEnhance.Sharpness(img).enhance(1.05)
+        img.save(image_path, "JPEG", quality=quality, optimize=True)
+    return image_path
+
+
 def generate_ics(name, dosage, time_select):
     """【高分亮点：原生系统提醒拦截】生成 .ics 日历协议文件"""
     # 演示用：设定为明天上午 8 点提醒

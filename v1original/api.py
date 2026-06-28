@@ -2,6 +2,11 @@
 智爱助老 - FastAPI 后端接口（前后端分离）
 与 core_logic、ai_agents 保持原有业务逻辑一致。
 """
+import warnings
+
+# macOS 系统 Python 使用 LibreSSL，urllib3 v2 会打印无害警告；gradio 又要求 urllib3 2.x
+warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL 1.1.1+")
+
 import json
 import tempfile
 import os
@@ -89,7 +94,7 @@ async def api_ocr(
     text: str = Form(""),
 ):
     """
-    上传图片和/或文本，调用 agent_ocr_extract 解析药品信息。
+    上传图片和/或文本：阶段1 本地 OCR 识别文字，阶段2 LLM 翻译为大白话并结构化。
     返回：status, summary, name, dosage, contra, time, custom_time
     """
     text_input = (text or "").strip()

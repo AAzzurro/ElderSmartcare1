@@ -9,4 +9,6 @@ fastapi
 uvicorn[standard]
 python-dotenv
 pydub
-python-multipart
+rapidocr-onnxruntime
+onnxruntime
+opencv-python-headless
