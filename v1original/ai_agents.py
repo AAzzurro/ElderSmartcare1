@@ -174,46 +174,20 @@ _MEDICINE_EXTRACT_SYS_PROMPT = """
 【🔴 致命警告：输出格式控制】：
 必须、只能输出一个合法的 JSON 对象，不要任何多余字符。
 
-【🔴 识别失败 / 非药品内容 — 必须严格遵守】：
-- 若内容为空、过少、模糊、与药品无关，或无法从原文明确读出具体药名，必须返回 valid 为 false，所有业务字段留空。
-- 严禁猜测、编造、套用范例中的药名！禁止因常见疾病（如高血压、心脏病、糖尿病）而虚构药物。
-- 空白照片、风景、人脸、家具、无关文档等，一律 valid=false。
-- 只有原文中确实出现药品名称或说明书关键信息时，才设 valid=true。
+【字段要求】：
+- "summary": 用一句通俗易懂的大白话，对药品的核心信息（名称、功效、用法、禁忌）进行整体概括。
+- "name": 真实的药名。
+- "dosage": 大白话用法！严格照一日吃几次，每次吃几片的格式。若说明书中以范围给出计量则选取中间值；毫克请尽量换算成片数。
+- "contra": 带有警告意味的禁忌！
+- "time": 根据药理学常识和说明书推断吃药时间，必须输出数组。从以下标签中挑选（不要 Emoji）：
+  ["晨起空腹", "早餐前", "早餐中", "早餐后", "午餐前", "午餐中", "午餐后",
+   "晚餐前", "晚餐中", "晚餐后", "睡前", "紧急/按需服用"]
+  标签数量与 dosage 中一日吃的次数尽量一致。
+- "custom_time": 有严格间隔或特殊时间要求时必填，否则为 ""。
 
-【字段要求】（仅 valid=true 时填写，否则全部为空字符串或空数组）：
-- "valid": true 或 false
-- "reason": valid=false 时说明原因（如「未识别到药品文字」），valid=true 时为 ""
-- "summary": 用一句通俗易懂的大白话概括。
-- "name": 必须从原文读出的真实药名，不得臆造。
-- "dosage": 大白话用法。
-- "contra": 禁忌说明。
-- "time": 服药时间标签数组（规则同前）。
-- "custom_time": 特殊时间要求，无则 ""。
-
-成功范例（仅示格式，药名须来自用户原文，不可照抄）：
-{"valid": true, "reason": "", "summary": "...", "name": "...", "dosage": "...", "contra": "...", "time": ["早餐后"], "custom_time": ""}
-
-失败范例：
-{"valid": false, "reason": "图片中未识别到药品说明书文字", "summary": "", "name": "", "dosage": "", "contra": "", "time": [], "custom_time": ""}
+范例：
+{"summary": "这是降血糖药，每餐后吃半片，一天吃三次，肠胃不好千万别吃", "name": "阿卡波糖片", "dosage": "每次吃半片，一天吃三次", "contra": "肠胃不好的千万别吃！", "time": ["早餐后", "午餐后", "晚餐后"], "custom_time": ""}
 """
-
-
-def _meaningful_text_len(text: str) -> int:
-    """去掉空白与标点后的有效字符数，用于判断 OCR 是否过少。"""
-    if not text:
-        return 0
-    cleaned = re.sub(r"[\s\W_]+", "", text, flags=re.UNICODE)
-    return len(cleaned)
-
-
-def _is_plausible_drug_name(name: str) -> bool:
-    name = (name or "").strip()
-    if not name or len(name) < 2:
-        return False
-    invalid = {"未提取到", "未知", "无", "不详", "N/A", "null", "None"}
-    if name in invalid:
-        return False
-    return True
 
 
 def agent_ocr_extract(image, text_input):
@@ -235,17 +209,6 @@ def agent_ocr_extract(image, text_input):
         if not ocr_text.strip() and not text_input:
             return (
                 "⚠️ 未能从图片中识别出文字，请重新拍照（尽量正对、光线充足）或手动输入",
-                "",
-                "",
-                "",
-                "",
-                [],
-                "",
-            )
-
-        if _meaningful_text_len(ocr_text) < 12 and not text_input:
-            return (
-                "⚠️ 识别到的文字过少，可能不是药品说明书，请重新拍摄清晰的药品包装或说明书",
                 "",
                 "",
                 "",
@@ -293,15 +256,6 @@ def agent_ocr_extract(image, text_input):
 
         data = json.loads(content)
 
-        if data.get("valid") is False:
-            reason = (data.get("reason") or "").strip() or "未能识别药品信息，请确认拍摄的是药品说明书或药盒"
-            return f"⚠️ {reason}", "", "", "", "", [], ""
-
-        name = (data.get("name") or "").strip()
-        if not _is_plausible_drug_name(name):
-            reason = (data.get("reason") or "").strip() or "未能从内容中提取到明确药品名称，请重新拍摄"
-            return f"⚠️ {reason}", "", "", "", "", [], ""
-
         time_list = data.get("time", ["早餐后"])
         if not isinstance(time_list, list):
             time_list = ["早餐后"]
@@ -313,7 +267,7 @@ def agent_ocr_extract(image, text_input):
         return (
             "✅ 提取成功！请在下方核对：",
             data.get("summary", ""),
-            name,
+            data.get("name", "未提取到"),
             dosage_str or "未提取到",
             data.get("contra", "无"),
             time_list,
