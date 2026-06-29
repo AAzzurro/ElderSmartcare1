@@ -405,16 +405,18 @@ async def api_transcribe(audio: UploadFile = File(...)):
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(await audio.read())
-        # 为了兼容浏览器录制的 webm/opus 等格式，优先尝试转码为标准 wav
+        # 浏览器 webm/opus 等非常规格式才转码，原生 aac/m4a/wav/mp3 直接识别以加快速度
         convert_path = path
-        try:
-            audio_seg = AudioSegment.from_file(path)
-            fd_wav, wav_path = tempfile.mkstemp(suffix=".wav")
-            os.close(fd_wav)
-            audio_seg.export(wav_path, format="wav")
-            convert_path = wav_path
-        except Exception as e:
-            print(f"语音文件转码失败，直接使用原文件进行识别: {e!r}")
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in (".wav", ".mp3", ".m4a", ".aac", ".mp4", ".mpeg"):
+            try:
+                audio_seg = AudioSegment.from_file(path)
+                fd_wav, wav_path = tempfile.mkstemp(suffix=".wav")
+                os.close(fd_wav)
+                audio_seg.export(wav_path, format="wav")
+                convert_path = wav_path
+            except Exception as e:
+                print(f"语音文件转码失败，直接使用原文件进行识别: {e!r}")
 
         text = transcribe_audio(convert_path)
         return {"text": text}

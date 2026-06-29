@@ -24,3 +24,10 @@ ffprobe.exe
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# SQLite / SQL 数据库（本地运行时数据，不提交）
+*.sql
+*.sqlite
+*.sqlite3
+*.db
+v1original/data/

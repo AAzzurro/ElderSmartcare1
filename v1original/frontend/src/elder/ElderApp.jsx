@@ -98,6 +98,22 @@ function ElderQrCard() {
   );
 }
 
+function isOcrResponseValid(data) {
+  const name = String(data?.name || "").trim();
+  const status = String(data?.status || "").trim();
+  if (status.startsWith("❌") || status.startsWith("⚠️")) return false;
+  if (!name || name === "未提取到" || name === "未知") return false;
+  return true;
+}
+
+function ocrFailureMessage(data) {
+  const status = String(data?.status || "").trim();
+  if (status) {
+    return status.replace(/^[✅❌⚠️]\s*/, "");
+  }
+  return "未能识别药品信息，请重新拍摄清晰的药品说明书，或确认拍摄内容为药品。";
+}
+
 // ========== OCR Input Step ==========
 function ElderOcrInputSection({ onResult, onBack }) {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -146,6 +162,15 @@ function ElderOcrInputSection({ onResult, onBack }) {
       const nextContra = data?.contra || "";
       const nextTimeList = Array.isArray(data?.time) ? data.time : [];
       const nextCustomTime = data?.custom_time || "";
+
+      if (!isOcrResponseValid(data)) {
+        setModal({
+          open: true,
+          title: "识别失败",
+          description: ocrFailureMessage(data),
+        });
+        return;
+      }
 
       if (onResult) {
         onResult({
@@ -242,6 +267,10 @@ function ElderOcrInputSection({ onResult, onBack }) {
 }
 
 // ========== OCR Result Step ==========
+// 智能解析页底部操作按钮（与「保存用药」圆角、字号一致）
+const OCR_ACTION_BTN_CLASS =
+  "!flex-1 !w-auto !mt-0 !rounded-full !py-5 !text-2xl font-extrabold !min-h-0";
+
 function ElderOcrResultSection({ ocrResult, onAddMedicine, onBack, currentElderly }) {
   const [summary, setSummary] = useState(ocrResult?.summary || "");
   const [name, setName] = useState(ocrResult?.name || "");
@@ -518,8 +547,10 @@ function ElderOcrResultSection({ ocrResult, onAddMedicine, onBack, currentElderl
     }
   };
 
+  const hasCustomTime = Boolean((customTime || "").trim());
+
   return (
-    <div className="px-4 pb-10 space-y-4">
+    <div className="flex flex-col h-dvh max-h-dvh overflow-hidden bg-gray-50">
       <Modal
         open={modal.open}
         title={modal.title}
@@ -681,6 +712,7 @@ function ElderOcrResultSection({ ocrResult, onAddMedicine, onBack, currentElderl
 
       <audio ref={audioRef} className="hidden" />
 
+      <div className="flex-1 overflow-y-auto px-4 pt-4 pb-3 space-y-3">
       <SectionTitle size="xl">智能解析药品信息</SectionTitle>
 
       <Card>
@@ -703,7 +735,7 @@ function ElderOcrResultSection({ ocrResult, onAddMedicine, onBack, currentElderl
           </div>
           <TextArea
             placeholder="（这里显示 AI 概括结果，可手动修改）"
-            rows={4}
+            rows={3}
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
           />
@@ -830,49 +862,48 @@ function ElderOcrResultSection({ ocrResult, onAddMedicine, onBack, currentElderl
               <span className="text-gray-500 text-xl">未推断</span>
             )}
           </div>
-          <div>
-            <div className="text-2xl font-semibold text-gray-800 mb-2">
-              特殊用药时间说明
+          {hasCustomTime ? (
+            <div>
+              <div className="text-xl font-semibold text-gray-800 mb-2">
+                特殊用药时间说明
+              </div>
+              <TextArea
+                placeholder="暂无特殊用药时间"
+                rows={2}
+                value={customTime}
+                onChange={(e) => setCustomTime(e.target.value)}
+              />
             </div>
-            <TextArea
-              placeholder="暂无特殊用药时间"
-              rows={2}
-              value={customTime}
-              onChange={(e) => setCustomTime(e.target.value)}
-            />
-          </div>
+          ) : null}
         </div>
       </Card>
+      </div>
 
-      <Card>
-        <div className="space-y-3">
-          <SectionTitle size="xl">
-            <span className="inline-flex items-center gap-2">
-              <Mic className="w-7 h-7 text-blue-600" />
-              <span>语音备注</span>
-            </span>
-          </SectionTitle>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="audio/*"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0] || null;
-              setAudioFile(file);
-            }}
-          />
-          <div className="text-2xl text-gray-600">
-            {audioFile ? (
-              <span className="inline-flex items-center gap-2">
-                <CheckCircle2 className="w-6 h-6 text-blue-600" />
-                <span>已录制语音备注，将随本次用药一起保存。</span>
-              </span>
-            ) : (
-              ""
-            )}
-          </div>
+      <div className="flex-shrink-0 border-t border-gray-200 bg-white px-4 py-3 space-y-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="audio/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0] || null;
+            setAudioFile(file);
+          }}
+        />
+        <input
+          ref={boxImageInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0] || null;
+            setBoxImageFile(file);
+          }}
+        />
+        <div className="flex gap-2">
           <VoiceRecorderButton
+            className={OCR_ACTION_BTN_CLASS}
             onRecorded={onRecordedNote}
             onRecordTooShort={() =>
               setModal({
@@ -881,80 +912,37 @@ function ElderOcrResultSection({ ocrResult, onAddMedicine, onBack, currentElderl
                 description: "请至少录制1秒。",
               })
             }
-            labelIdle="开始录制"
+            labelIdle={audioFile ? "已录语音" : "语音备注"}
             labelRecording="停止录制"
-            labelProcessing="处理中..."
+            labelProcessing="录制中..."
             onFallbackClick={onPickAudioNote}
           />
-        </div>
-      </Card>
-
-      <Card>
-        <div className="space-y-3">
-          <SectionTitle size="xl">
-            <span className="inline-flex items-center gap-2">
-              <Camera className="w-7 h-7 text-blue-600" />
-              <span>拍摄药盒</span>
-            </span>
-          </SectionTitle>
-          <input
-            ref={boxImageInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0] || null;
-              setBoxImageFile(file);
-            }}
-          />
-          <div className="text-2xl text-gray-600">
-            {boxImageFile ? (
-              <span className="inline-flex items-center gap-2">
-                <CheckCircle2 className="w-6 h-6 text-blue-600" />
-                <span>已拍摄药盒，可在用药排班中查看。</span>
-              </span>
-            ) : (
-              ""
-            )}
-          </div>
           <PrimaryButton
             variant="photo"
+            className={OCR_ACTION_BTN_CLASS}
             onClick={() => boxImageInputRef.current?.click()}
           >
-            <span className="flex items-center justify-center gap-3">
-              <Camera className="w-7 h-7 text-white" />
-              <span>拍摄药盒照片</span>
+            <span className="inline-flex items-center justify-center gap-2">
+              <Camera className="w-7 h-7 text-white shrink-0" />
+              <span>{boxImageFile ? "已拍摄" : "拍摄药盒"}</span>
             </span>
           </PrimaryButton>
-          {boxImageFile && (
-            <button
-              type="button"
-              className="text-base text-red-600 font-semibold"
-              onClick={() => setBoxImageFile(null)}
-            >
-              清除已选照片
-            </button>
-          )}
         </div>
-      </Card>
-
-      <div className="pt-2" />
-      <PrimaryButton onClick={onAdd} disabled={isAdding}>
-        {isAdding ? "正在加入用药卡片" : "➕ 确认无误，保存用药"}
-      </PrimaryButton>
-      {addMsg ? (
-        <div className="text-center text-2xl text-emerald-600 font-semibold">
-          {addMsg}
-        </div>
-      ) : null}
-
-      <PrimaryButton variant="secondary" onClick={onBack}>
-        <span className="inline-flex items-center gap-2">
-          <RotateCcw className="w-5 h-5" />
-          <span>返回重新输入</span>
-        </span>
-      </PrimaryButton>
+        <PrimaryButton onClick={onAdd} disabled={isAdding}>
+          {isAdding ? "正在加入用药卡片" : "➕ 确认无误，保存用药"}
+        </PrimaryButton>
+        {addMsg ? (
+          <div className="text-center text-lg text-emerald-600 font-semibold">
+            {addMsg}
+          </div>
+        ) : null}
+        <PrimaryButton variant="secondary" onClick={onBack} className="!py-3 !text-lg">
+          <span className="inline-flex items-center gap-2">
+            <RotateCcw className="w-5 h-5" />
+            <span>返回重新输入</span>
+          </span>
+        </PrimaryButton>
+      </div>
     </div>
   );
 }
@@ -1010,7 +998,18 @@ function ElderReminderTab({ currentElderly }) {
   const [takenLoadingIndex, setTakenLoadingIndex] = useState(null);
   const [boxImageModal, setBoxImageModal] = useState({ open: false, imageUrl: null, drugName: "", loading: false });
   const [icsLoading, setIcsLoading] = useState(false);
+  const [expandedRows, setExpandedRows] = useState(() => new Set());
   const cardAudioRef = useRef(null);
+
+  const toggleRowExpanded = (index) => {
+    if (index == null) return;
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
 
   const elderSchedules = schedules.filter(
     (row) =>
@@ -1332,25 +1331,30 @@ function ElderReminderTab({ currentElderly }) {
         />
       )}
       <Card>
-        <SectionTitle size="xl">当前老人用药排班</SectionTitle>
+        <SectionTitle size="xl">用药排班</SectionTitle>
         <div className="mt-3 space-y-3">
           {elderSchedules.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 text-2xl text-gray-500">
               暂无用药排班记录。
             </div>
           ) : (
-            elderSchedules.map((row, idx) => (
+            elderSchedules.map((row, idx) => {
+              const rowKey = row._index ?? idx;
+              const isExpanded = expandedRows.has(rowKey);
+              return (
               <div
-                key={row._index ?? idx}
+                key={rowKey}
                 className="rounded-2xl border border-gray-200 bg-white p-4"
               >
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-[#1e5a8e]">药品：{row["药品名称"] || "未命名药品"}</div>
+                  <div className="text-2xl font-bold text-[#1e5a8e]">
+                    药品：{row["药品名称"] || "未命名药品"}
+                  </div>
                   <div className="mt-2 flex flex-wrap justify-center gap-2">
                     <button
                       type="button"
                       className={classNames(
-                        "inline-flex px-4 py-2 rounded-xl font-semibold text-base shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all active:scale-95",
+                        "inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-semibold text-base shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all active:scale-95",
                         playingVoiceIndex === row._index
                           ? "bg-blue-200 text-blue-800"
                           : "bg-blue-50 text-blue-600 hover:bg-blue-100"
@@ -1358,20 +1362,37 @@ function ElderReminderTab({ currentElderly }) {
                       disabled={playingVoiceIndex === row._index}
                       onClick={() => onPlayVoice(row)}
                     >
-                      {playingVoiceIndex === row._index ? "播放中..." : "收听语音叮嘱"}
+                      {playingVoiceIndex === row._index ? "播放中..." : "收听叮嘱"}
                     </button>
                     <button
                       type="button"
-                      className="inline-flex px-4 py-2 rounded-xl font-semibold text-base bg-amber-50 text-amber-700 shadow-md hover:shadow-lg hover:-translate-y-0.5 hover:bg-amber-100 transition-all active:scale-95"
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-semibold text-base bg-amber-50 text-amber-700 shadow-md hover:shadow-lg hover:-translate-y-0.5 hover:bg-amber-100 transition-all active:scale-95"
                       onClick={() => onViewBoxImage(row)}
                     >
-                      <span className="inline-flex items-center gap-2">
-                        <Camera className="w-5 h-5" />
-                        <span>查看药盒</span>
-                      </span>
+                      <Camera className="w-5 h-5 shrink-0" />
+                      <span>查看药盒</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-semibold text-base bg-gray-100 text-gray-700 shadow-md hover:shadow-lg hover:-translate-y-0.5 hover:bg-gray-200 transition-all active:scale-95"
+                      onClick={() => toggleRowExpanded(rowKey)}
+                    >
+                      {isExpanded ? (
+                        <>
+                          <ChevronUp className="w-5 h-5 shrink-0" />
+                          <span>收起</span>
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="w-5 h-5 shrink-0" />
+                          <span>展开</span>
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>
+                {isExpanded ? (
+                <>
                 {(() => {
                   const raw = row["服药时间"] || "";
                   const sepCustom = "；注意：";
@@ -1423,8 +1444,11 @@ function ElderReminderTab({ currentElderly }) {
                     {deletingIndex === row._index ? "正在删除..." : "删除这条用药"}
                   </button>
                 </div>
+                </>
+                ) : null}
               </div>
-            ))
+            );
+            })
           )}
         </div>
       </Card>
@@ -1483,8 +1507,33 @@ function ElderReminderTab({ currentElderly }) {
   );
 }
 
+function useKeyboardInset() {
+  const [inset, setInset] = useState(0);
+
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return undefined;
+
+    const update = () => {
+      const keyboardHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      setInset(keyboardHeight);
+    };
+
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    update();
+
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
+
+  return inset;
+}
+
 // ========== Chat Tab ==========
-function ElderChatTab({ currentElderly }) {
+function ElderChatTab({ currentElderly, onBack }) {
   const [messages, setMessages] = useState([
     {
       role: "assistant",
@@ -1498,7 +1547,25 @@ function ElderChatTab({ currentElderly }) {
   const [activeTtsIndex, setActiveTtsIndex] = useState(null);
   const audioRef = useRef(null);
   const fileInputRef = useRef(null);
+  const messagesEndRef = useRef(null);
+  const inputBarRef = useRef(null);
+  const [inputBarHeight, setInputBarHeight] = useState(56);
+  const keyboardInset = useKeyboardInset();
   const [asrLoading, setAsrLoading] = useState(false);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  useEffect(() => {
+    const el = inputBarRef.current;
+    if (!el) return undefined;
+    const update = () => setInputBarHeight(el.offsetHeight || 56);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [asrLoading, loading]);
 
   const onSend = async () => {
     const text = input.trim();
@@ -1609,7 +1676,7 @@ function ElderChatTab({ currentElderly }) {
   };
 
   return (
-    <div className="px-4 pb-10 space-y-4">
+    <div className="flex flex-col h-dvh max-h-dvh overflow-hidden bg-[#ededed]">
       <audio ref={audioRef} className="hidden" />
 
       <Modal
@@ -1619,7 +1686,6 @@ function ElderChatTab({ currentElderly }) {
         onClose={() => setModal((m) => ({ ...m, open: false }))}
       />
 
-
       <input
         ref={fileInputRef}
         type="file"
@@ -1628,75 +1694,117 @@ function ElderChatTab({ currentElderly }) {
         onChange={onAudioSelected}
       />
 
-      <Card>
+      <header className="flex-shrink-0 flex items-center gap-2 px-2 py-2.5 bg-[#f7f7f7] border-b border-gray-300/60 pt-[max(0.5rem,env(safe-area-inset-top))]">
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex items-center justify-center w-10 h-10 rounded-lg text-gray-700 active:bg-gray-200 transition-colors"
+          aria-label="返回首页"
+        >
+          <ArrowLeft className="w-6 h-6" />
+        </button>
+        <h1 className="flex-1 text-center text-xl font-semibold text-gray-900 pr-10">
+          家庭医生
+        </h1>
+      </header>
 
-        <div className="mt-3 h-[400px] overflow-y-auto rounded-2xl bg-gray-50 shadow-md p-4 space-y-3">
-          {messages.map((m, idx) => {
-            const isUser = m.role === "user";
-            const isAssistant = m.role === "assistant";
-            return (
+      <div
+        className="flex-1 overflow-y-auto overscroll-contain px-3 py-3 space-y-3"
+        style={{ paddingBottom: inputBarHeight + keyboardInset + 8 }}
+      >
+        {messages.map((m, idx) => {
+          const isUser = m.role === "user";
+          const isAssistant = m.role === "assistant";
+          return (
+            <div
+              key={idx}
+              className={classNames("flex", isUser ? "justify-end" : "justify-start")}
+            >
               <div
-                key={idx}
                 className={classNames(
-                  "max-w-[85%] rounded-2xl p-3 shadow-sm",
+                  "relative max-w-[80%] rounded-lg px-3 py-2.5 shadow-sm",
                   isUser
-                    ? "ml-auto bg-blue-600 text-white"
+                    ? "bg-[#95ec69] text-gray-900"
                     : "bg-white text-gray-900"
                 )}
               >
-                <div className="flex items-center justify-between mb-1">
-                  <div className="text-2xl font-semibold">
-                    {isUser ? "你" : "医生"}
-                  </div>
-                  {isAssistant && (
+                {isAssistant && (
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-sm font-medium text-gray-500">医生</span>
                     <button
                       type="button"
-                      className="text-base px-2 py-1 rounded-full bg-blue-50 text-blue-600 font-semibold shadow-md hover:shadow-lg hover:-translate-y-0.5 active:scale-95 transition-all"
+                      className="text-sm px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 font-semibold active:scale-95 transition-all"
                       disabled={ttsLoading && activeTtsIndex === idx}
                       onClick={() => onReadMessage(idx, m.content)}
                     >
                       {ttsLoading && activeTtsIndex === idx ? "朗读中..." : "朗读"}
                     </button>
-                  )}
+                  </div>
+                )}
+                <div className="text-xl whitespace-pre-wrap break-words leading-relaxed">
+                  {m.content}
                 </div>
-                <div className="text-2xl whitespace-pre-wrap">{m.content}</div>
               </div>
-            );
-          })}
-        </div>
-      </Card>
+            </div>
+          );
+        })}
+        {loading ? (
+          <div className="flex justify-start">
+            <div className="bg-white rounded-lg px-4 py-2.5 text-gray-500 text-lg shadow-sm">
+              医生正在回复...
+            </div>
+          </div>
+        ) : null}
+        <div ref={messagesEndRef} />
+      </div>
 
-      <TextArea
-        label="输入咨询"
-        placeholder="如：我胃疼能吃布洛芬吗？"
-        rows={2}
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-      />
-      <VoiceRecorderButton
-        onRecorded={onRecorded}
-        onRecordTooShort={() =>
-          setModal({
-            open: true,
-            title: "录音太短",
-            description: "请至少录制约 1 秒后再松开。",
-          })
-        }
-        labelIdle={asrLoading ? "正在识别语音..." : "开始录音"}
-        labelRecording="停止录音"
-        labelProcessing="处理中..."
-        onFallbackClick={onPickAudio}
-      />
-      <p className="text-center text-gray-500 text-sm">
-        无法使用麦克风时，可点击上方输入框直接文字输入。
-      </p>
-      <PrimaryButton
-        variant="submit"
-        onClick={onSend}
-        disabled={loading}
+      <div
+        ref={inputBarRef}
+        className="fixed inset-x-0 z-20"
+        style={{ bottom: keyboardInset }}
       >
-        {loading ? "正在向医生咨询..." : "发送"}
-      </PrimaryButton>
+        <div className="max-w-md mx-auto w-full bg-[#f7f7f7] border-t border-gray-300/60 px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+          {asrLoading ? (
+            <div className="flex items-center justify-center gap-2 text-sm text-blue-600 font-medium pb-1.5">
+              <LoadingDots />
+              <span>正在识别语音，请稍候...</span>
+            </div>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <VoiceRecorderButton
+              compact
+              isExternalProcessing={asrLoading}
+              onRecorded={onRecorded}
+              onRecordTooShort={() =>
+                setModal({
+                  open: true,
+                  title: "录音太短",
+                  description: "请至少录制约 1 秒后再松开。",
+                })
+              }
+              labelIdle="录音"
+              labelRecording="停止"
+              labelProcessing="识别中"
+              onFallbackClick={onPickAudio}
+            />
+            <TextArea
+              compact
+              placeholder="如：我胃疼能吃布洛芬吗？"
+              rows={1}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+            />
+            <PrimaryButton
+              variant="submit"
+              onClick={onSend}
+              disabled={loading || !input.trim() || asrLoading}
+              className="!w-auto !min-w-[52px] !h-[38px] !min-h-[38px] !px-3 !py-0 !text-base !leading-none flex-shrink-0 !rounded-lg"
+            >
+              {loading ? "..." : "发送"}
+            </PrimaryButton>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1838,21 +1946,10 @@ export default function ElderApp({ onBack }) {
       ) : null}
 
       {mode === ELDER_MODES.chat ? (
-        <div>
-          <div className="px-4 py-4 border-b border-gray-200">
-            <PrimaryButton
-              variant="secondary"
-              onClick={() => setMode(ELDER_MODES.home)}
-              className="w-auto px-6 py-3 text-2xl font-semibold bg-blue-50 text-blue-600 shadow-md hover:shadow-lg hover:-translate-y-0.5 active:scale-95"
-            >
-              <span className="inline-flex items-center gap-2">
-                <ArrowLeft className="w-6 h-6" />
-                <span>返回首页</span>
-              </span>
-            </PrimaryButton>
-          </div>
-          <ElderChatTab currentElderly={currentElderly} />
-        </div>
+        <ElderChatTab
+          currentElderly={currentElderly}
+          onBack={() => setMode(ELDER_MODES.home)}
+        />
       ) : null}
     </div>
   );

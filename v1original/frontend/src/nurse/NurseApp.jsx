@@ -1865,7 +1865,7 @@ export default function NurseApp({ onBack }) {
       )}
 
       <nav className="fixed inset-x-0 bottom-0 z-50 pointer-events-none">
-        <div className="max-w-md mx-auto bg-white/90 backdrop-blur-lg border-t border-gray-200 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] flex justify-around items-center px-2 pt-3 pb-6 pointer-events-auto">
+        <div className="w-full md:max-w-md mx-auto bg-white/90 backdrop-blur-lg border-t border-gray-200 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] flex justify-around items-center px-2 pt-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] pointer-events-auto">
           {FAMILY_TABS.map((t) => {
             const isActive = t.id === tab;
             const colorClass = isActive ? "text-blue-600" : "text-gray-400";

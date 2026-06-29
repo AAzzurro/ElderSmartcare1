@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { VoiceRecorder } from "capacitor-voice-recorder";
 import { Button, Modal as AntModal, TextArea as AntTextArea } from "antd-mobile";
-import { Mic } from "lucide-react";
+import { Mic, Loader2 } from "lucide-react";
 import "antd-mobile/es/global";
 
 const MIN_RECORD_MS = 800;
+/** 聊天底栏统一高度（与输入框、按钮对齐） */
+export const CHAT_TOOLBAR_HEIGHT = 38;
 
 function base64ToBlob(base64, mimeType = "audio/aac") {
   if (!base64 || typeof base64 !== "string") return null;
@@ -25,8 +27,8 @@ export function classNames(...xs) {
 
 export function MobileShell({ children }) {
   return (
-    <div className="min-h-screen bg-gray-200 px-4 py-6">
-      <div className="max-w-md mx-auto min-h-screen bg-gray-50 shadow-2xl overflow-x-hidden relative rounded-[28px] ring-1 ring-black/5">
+    <div className="min-h-dvh bg-gray-50 md:bg-gray-200 md:px-4 md:py-6">
+      <div className="mx-auto min-h-dvh w-full bg-gray-50 md:max-w-md md:min-h-[calc(100dvh-3rem)] md:shadow-2xl md:overflow-x-hidden md:relative md:rounded-[28px] md:ring-1 md:ring-black/5">
         {children}
       </div>
     </div>
@@ -175,6 +177,9 @@ export function VoiceRecorderButton({
   labelRecording = "停止录音",
   labelProcessing = "处理中...",
   onFallbackClick,
+  compact = false,
+  className = "",
+  isExternalProcessing = false,
 }) {
   const [status, setStatus] = useState("idle"); // idle | recording | processing | unsupported
   const mediaRecorderRef = useRef(null);
@@ -197,18 +202,35 @@ export function VoiceRecorderButton({
     return !!started?.value;
   };
 
+  const deliverRecording = async (blob, msDuration) => {
+    if (msDuration < MIN_RECORD_MS && onRecordTooShort) {
+      onRecordTooShort();
+      setStatus("idle");
+      return;
+    }
+    if (blob && blob.size > 0 && onRecorded) {
+      setStatus("processing");
+      try {
+        await Promise.resolve(onRecorded(blob));
+      } finally {
+        setStatus("idle");
+      }
+      return;
+    }
+    setStatus("idle");
+  };
+
   const stopNativeRecording = async () => {
     const result = await VoiceRecorder.stopRecording();
     const value = result?.value;
-    if (!value) return;
+    if (!value) {
+      setStatus("idle");
+      return;
+    }
     const mimeType = value.mimeType || "audio/aac";
     const blob = base64ToBlob(value.recordDataBase64, mimeType);
     const msDuration = value.msDuration ?? 0;
-    if (msDuration < MIN_RECORD_MS && onRecordTooShort) {
-      onRecordTooShort();
-    } else if (blob && blob.size > 0 && onRecorded) {
-      onRecorded(blob);
-    }
+    await deliverRecording(blob, msDuration);
   };
 
   const ensureWebSupport = () => {
@@ -234,18 +256,22 @@ export function VoiceRecorderButton({
       setStatus("processing");
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      const mr = new MediaRecorder(stream);
+      const preferredMime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : undefined;
+      const mr = preferredMime
+        ? new MediaRecorder(stream, { mimeType: preferredMime, audioBitsPerSecond: 32000 })
+        : new MediaRecorder(stream);
       chunksRef.current = [];
       mr.ondataavailable = (e) => {
         if (e.data?.size > 0) chunksRef.current.push(e.data);
       };
-      mr.onstop = () => {
+      mr.onstop = async () => {
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
         chunksRef.current = [];
-        if (onRecorded && blob.size > 0) onRecorded(blob);
         streamRef.current?.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
-        setStatus("idle");
+        await deliverRecording(blob, blob.size > 0 ? MIN_RECORD_MS + 1 : 0);
       };
       mediaRecorderRef.current = mr;
       mr.start();
@@ -259,6 +285,7 @@ export function VoiceRecorderButton({
 
   const handleStart = async () => {
     if (status === "recording" || status === "processing") return;
+
     if (isNative) {
       try {
         setStatus("processing");
@@ -281,14 +308,15 @@ export function VoiceRecorderButton({
 
   const handleStop = async () => {
     if (status !== "recording") return;
+
     if (isNative) {
       try {
         setStatus("processing");
         await stopNativeRecording();
       } catch (e) {
         console.warn("Native recording stop failed:", e);
+        setStatus("idle");
       }
-      setStatus("idle");
       return;
     }
     const mr = mediaRecorderRef.current;
@@ -298,12 +326,49 @@ export function VoiceRecorderButton({
     }
   };
 
+  const showProcessing = status === "processing" || isExternalProcessing;
+
   const label =
     status === "recording"
       ? labelRecording
-      : status === "processing"
+      : showProcessing
         ? labelProcessing
         : labelIdle;
+
+  const compactBtnClass = classNames(
+    "h-[38px] w-[38px] min-w-[38px] flex-shrink-0 rounded-lg p-0",
+    "inline-flex items-center justify-center",
+    "bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-sm",
+    "transition-all duration-200 active:scale-95",
+    "disabled:opacity-60 disabled:cursor-not-allowed",
+    status === "recording" ? "animate-pulse ring-2 ring-blue-400/70" : "",
+    className
+  );
+
+  const handleClick = () => {
+    if (showProcessing) return;
+    if (status === "idle") handleStart();
+    else if (status === "recording") handleStop();
+    else if (status === "unsupported" && onFallbackClick) onFallbackClick();
+  };
+
+  if (compact) {
+    return (
+      <button
+        type="button"
+        className={compactBtnClass}
+        onClick={handleClick}
+        disabled={showProcessing}
+        aria-label={label}
+      >
+        {showProcessing ? (
+          <Loader2 className="w-[18px] h-[18px] text-white animate-spin" strokeWidth={2.5} />
+        ) : (
+          <Mic className="w-[18px] h-[18px] text-white block" strokeWidth={2.5} />
+        )}
+      </button>
+    );
+  }
 
   return (
     <Button
@@ -314,40 +379,45 @@ export function VoiceRecorderButton({
       className={classNames(
         "mt-1 !h-auto !rounded-full !py-5 !text-2xl font-extrabold flex items-center justify-center gap-3 transition-all duration-300 active:scale-95",
         "!bg-gradient-to-r !from-blue-500 !to-indigo-500 !text-white shadow-lg shadow-blue-500/30 hover:shadow-blue-500/50",
-        status === "recording" ? "animate-pulse ring-2 ring-blue-400/70" : ""
+        status === "recording" ? "animate-pulse ring-2 ring-blue-400/70" : "",
+        className
       )}
-      onClick={() => {
-        if (status === "idle") handleStart();
-        else if (status === "recording") handleStop();
-        else if (status === "unsupported" && onFallbackClick) onFallbackClick();
-      }}
-      disabled={status === "processing"}
+      onClick={handleClick}
+      disabled={showProcessing}
     >
       <span className="inline-flex items-center justify-center gap-2">
-        <Mic className="w-7 h-7 text-white" />
+        {showProcessing ? (
+          <Loader2 className="w-7 h-7 text-white animate-spin" />
+        ) : (
+          <Mic className="w-7 h-7 text-white" />
+        )}
         <span className="leading-tight">{label}</span>
       </span>
     </Button>
   );
 }
 
-export function TextArea({ label, placeholder, rows = 3, value, onChange }) {
+export function TextArea({ label, placeholder, rows = 3, value, onChange, compact = false }) {
+  const toolbarHeight = CHAT_TOOLBAR_HEIGHT;
   return (
-    <div>
-      {label ? (
+    <div className={compact ? "flex-1 min-w-0" : ""}>
+      {label && !compact ? (
         <div className="text-xl font-semibold text-gray-800 mb-2">{label}</div>
       ) : null}
       <AntTextArea
-        rows={rows}
+        rows={compact ? 1 : rows}
         value={value}
         placeholder={placeholder}
-        autoSize={{ minRows: rows, maxRows: rows + 2 }}
+        autoSize={compact ? { minRows: 1, maxRows: 4 } : { minRows: rows, maxRows: rows + 2 }}
         style={{
-          borderRadius: 20,
-          fontSize: 18,
-          padding: "12px 14px",
-          backgroundColor: "#f5f5f5",
-          boxShadow: "0 8px 30px rgba(0,0,0,0.06)",
+          borderRadius: compact ? 8 : 20,
+          fontSize: compact ? 16 : 18,
+          lineHeight: compact ? "22px" : undefined,
+          minHeight: compact ? toolbarHeight : undefined,
+          padding: compact ? "7px 10px" : "12px 14px",
+          backgroundColor: compact ? "#ffffff" : "#f5f5f5",
+          boxShadow: compact ? "none" : "0 8px 30px rgba(0,0,0,0.06)",
+          border: compact ? "1px solid #e5e5e5" : undefined,
         }}
         onChange={(val) => {
           if (onChange) {
