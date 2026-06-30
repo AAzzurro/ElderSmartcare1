@@ -99,10 +99,15 @@ function ElderQrCard() {
 }
 
 function isOcrResponseValid(data) {
+  if (data?.is_medicine === false) return false;
   const name = String(data?.name || "").trim();
+  const dosage = String(data?.dosage || "").trim();
+  const summary = String(data?.summary || "").trim();
   const status = String(data?.status || "").trim();
   if (status.startsWith("❌") || status.startsWith("⚠️")) return false;
   if (!name || name === "未提取到" || name === "未知") return false;
+  if (!dosage || dosage === "未提取到") return false;
+  if (!summary) return false;
   return true;
 }
 
@@ -110,6 +115,9 @@ function ocrFailureMessage(data) {
   const status = String(data?.status || "").trim();
   if (status) {
     return status.replace(/^[✅❌⚠️]\s*/, "");
+  }
+  if (data?.is_medicine === false) {
+    return "未能识别为药品，请重新拍摄药品说明书或药盒。";
   }
   return "未能识别药品信息，请重新拍摄清晰的药品说明书，或确认拍摄内容为药品。";
 }
@@ -119,12 +127,32 @@ function ElderOcrInputSection({ onResult, onBack }) {
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [modal, setModal] = useState({ open: false, title: "", description: "" });
+  const [modal, setModal] = useState({
+    open: false,
+    title: "",
+    description: "",
+    requireRetake: false,
+  });
   const fileInputRef = useRef(null);
 
   const openCamera = async () => {
     // 完全仿照「拍摄药盒」：永远走 input capture，点击即拉起拍照（不出现“相册/拍照”选择）
     fileInputRef.current?.click();
+  };
+
+  const resetCapture = () => {
+    setSelectedFile(null);
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return "";
+    });
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleRetake = () => {
+    setModal((m) => ({ ...m, open: false }));
+    resetCapture();
+    openCamera();
   };
 
   const onPickFile = (e) => {
@@ -164,10 +192,12 @@ function ElderOcrInputSection({ onResult, onBack }) {
       const nextCustomTime = data?.custom_time || "";
 
       if (!isOcrResponseValid(data)) {
+        resetCapture();
         setModal({
           open: true,
           title: "识别失败",
-          description: ocrFailureMessage(data),
+          description: `${ocrFailureMessage(data)}请重新拍摄。`,
+          requireRetake: true,
         });
         return;
       }
@@ -218,7 +248,20 @@ function ElderOcrInputSection({ onResult, onBack }) {
           open={modal.open}
           title={modal.title}
           description={modal.description}
-          onClose={() => setModal((m) => ({ ...m, open: false }))}
+          onClose={() => {
+            if (modal.requireRetake) resetCapture();
+            setModal((m) => ({ ...m, open: false, requireRetake: false }));
+          }}
+          customActions={
+            modal.requireRetake ? (
+              <PrimaryButton onClick={handleRetake}>
+                <span className="inline-flex items-center justify-center gap-2">
+                  <Camera className="w-6 h-6" />
+                  <span>重新拍摄</span>
+                </span>
+              </PrimaryButton>
+            ) : undefined
+          }
         />
 
         <SectionTitle size="xl">识别药品说明书</SectionTitle>

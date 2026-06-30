@@ -171,10 +171,23 @@ _MEDICINE_EXTRACT_SYS_PROMPT = """
 你是一位极具同理心的三甲医院医生，专门为老年人服务。
 你的任务是阅读说明书文字，提取信息，并把晦涩的医学术语彻底翻译成“老爷爷老奶奶能听懂的大白话”！
 
-【🔴 致命警告：输出格式控制】：
+【🔴 致命警告：输出格式控制（最高优先级）】：
 必须、只能输出一个合法的 JSON 对象，不要任何多余字符。
 
-【字段要求】：
+【🔴 非药品检测】：
+若 OCR 内容并非药品包装、药品说明书或用药相关信息，
+必须只输出：
+{"is_medicine": false, "reason": "未能识别为药品，请重新拍摄药品说明书或药盒"}
+不要输出其他任何字段。
+
+若内容明显是药品但信息残缺（看不清药名、无用法用量等关键信息），也必须输出：
+{"is_medicine": false, "reason": "药品信息不完整，请重新拍摄清晰的药品说明书或药盒"}
+
+【正常药品提取】：
+确认是药品相关内容后，输出：
+{"is_medicine": true, "summary": "...", "name": "...", "dosage": "...", "contra": "...", "time": [...], "custom_time": "..."}
+
+【字段要求】（仅 is_medicine 为 true 时填写）：
 - "summary": 用一句通俗易懂的大白话，对药品的核心信息（名称、功效、用法、禁忌）进行整体概括。
 - "name": 真实的药名。
 - "dosage": 大白话用法！严格照一日吃几次，每次吃几片的格式。若说明书中以范围给出计量则选取中间值；毫克请尽量换算成片数。
@@ -185,8 +198,8 @@ _MEDICINE_EXTRACT_SYS_PROMPT = """
   标签数量与 dosage 中一日吃的次数尽量一致。
 - "custom_time": 有严格间隔或特殊时间要求时必填，否则为 ""。
 
-范例：
-{"summary": "这是降血糖药，每餐后吃半片，一天吃三次，肠胃不好千万别吃", "name": "阿卡波糖片", "dosage": "每次吃半片，一天吃三次", "contra": "肠胃不好的千万别吃！", "time": ["早餐后", "午餐后", "晚餐后"], "custom_time": ""}
+范例（药品）：
+{"is_medicine": true, "summary": "这是降血糖药，每餐后吃半片，一天吃三次，肠胃不好千万别吃", "name": "阿卡波糖片", "dosage": "每次吃半片，一天吃三次", "contra": "肠胃不好的千万别吃！", "time": ["早餐后", "午餐后", "晚餐后"], "custom_time": ""}
 """
 
 
@@ -256,19 +269,39 @@ def agent_ocr_extract(image, text_input):
 
         data = json.loads(content)
 
+        if data.get("is_medicine") is False:
+            reason = (data.get("reason") or "").strip()
+            if not reason:
+                reason = "未能识别为药品，请重新拍摄药品说明书或药盒"
+            return f"❌ {reason}", "", "", "", "", [], ""
+
         time_list = data.get("time", ["早餐后"])
         if not isinstance(time_list, list):
             time_list = ["早餐后"]
         custom_time_str = (data.get("custom_time") or "").strip()
 
         dosage_str = data.get("dosage", "")
+        name_str = (data.get("name") or "").strip()
+        summary_str = (data.get("summary") or "").strip()
+
+        if not name_str or name_str in ("未提取到", "未知") or not dosage_str or dosage_str == "未提取到":
+            return (
+                "❌ 未能提取到有效药品信息，请重新拍摄清晰的药品说明书或药盒",
+                "",
+                "",
+                "",
+                "",
+                [],
+                "",
+            )
+
         time_list = _normalize_time_list_by_dosage(dosage_str, time_list, custom_time_str)
 
         return (
-            "✅ 提取成功！请在下方核对：",
-            data.get("summary", ""),
-            data.get("name", "未提取到"),
-            dosage_str or "未提取到",
+            "请核对",
+            summary_str,
+            name_str,
+            dosage_str,
             data.get("contra", "无"),
             time_list,
             custom_time_str,

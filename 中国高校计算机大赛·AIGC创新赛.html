@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN" >
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="./favicon.ico">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中国高校计算机大赛·AIGC创新赛</title>
+    <script src="./static/xuanyuan/plupload.full.min.js"></script>
+    <script src="./static/xuanyuan/ks3jssdk.min.js"></script>
+    <script src="./static/xuanyuan/async.min.js"></script>
+    <script type="module" crossorigin src="./static/index.6f5eddd0.js"></script>
+    <link rel="stylesheet" href="./static/index.99862885.css">
+  </head>
+  <body>
+  <div id="app">
+      <style>
+          .first-loading-wrp {
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              height: 90vh;
+              min-height: 90vh;
+          }
+          .first-loading-wrp > h1 {
+              font-size: 30px;
+              font-weight: bolder;
+          }
+          .first-loading-wrp .loading-wrp {
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              padding: 98px;
+          }
+          .dot {
+              position: relative;
+              box-sizing: border-box;
+              display: inline-block;
+              width: 64px;
+              height: 64px;
+              font-size: 64px;
+              transform: rotate(45deg);
+              animation: antRotate 1.2s infinite linear;
+          }
+
+          .dot i {
+              position: absolute;
+              display: block;
+              width: 28px;
+              height: 28px;
+              background-color: #1890ff;
+              border-radius: 100%;
+              opacity: 0.3;
+              transform: scale(0.75);
+              transform-origin: 50% 50%;
+              animation: antSpinMove 1s infinite linear alternate;
+          }
+
+          .dot i:nth-child(1) {
+              top: 0;
+              left: 0;
+          }
+
+          .dot i:nth-child(2) {
+              top: 0;
+              right: 0;
+              -webkit-animation-delay: 0.4s;
+              animation-delay: 0.4s;
+          }
+
+          .dot i:nth-child(3) {
+              right: 0;
+              bottom: 0;
+              -webkit-animation-delay: 0.8s;
+              animation-delay: 0.8s;
+          }
+
+          .dot i:nth-child(4) {
+              bottom: 0;
+              left: 0;
+              -webkit-animation-delay: 1.2s;
+              animation-delay: 1.2s;
+          }
+          @keyframes antRotate {
+              to {
+                  -webkit-transform: rotate(405deg);
+                  transform: rotate(405deg);
+              }
+          }
+
+          @-webkit-keyframes antRotate {
+              to {
+                  -webkit-transform: rotate(405deg);
+                  transform: rotate(405deg);
+              }
+          }
+
+          @keyframes antSpinMove {
+              to {
+                  opacity: 1;
+              }
+          }
+
+          @-webkit-keyframes antSpinMove {
+              to {
+                  opacity: 1;
+              }
+          }
+
+      </style>
+  </div>
+  <script>
+      // const urls = ['/#/home', '/#/entry', '/#/entry/detail', '/#/apply', '/#/info']
+      /***
+       *判断屏幕大小更改网页缩放比例
+      */
+      function initScreen() {
+        try {
+          var viewport = document.querySelector("meta[name=viewport]");
+          const headNode = document.querySelector("head");
+          if(!viewport){
+            headNode.append('<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">')
+          }
+          if(!document.querySelector("meta[http-equiv]")){
+            headNode.append('<meta http-equiv="X-UA-Compatible" content="ie=edge">')
+          }
+          var viewport = document.querySelector("meta[name=viewport]");
+          var winWidth = screen.width;
+          var minContentWidth = 1318;
+          var size = winWidth / minContentWidth;
+
+          if (winWidth < 1318) {
+              viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, user-scalable=yes');
+              document.querySelector("html").setAttribute('style', 'transform:scale('+size+'); transform-origin:0 0;');
+          }
+        } catch (error) {
+            console.error(error);
+        }
+      }
+        const isMobileBrowser = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        if (isMobileBrowser) {
+            initScreen()
+        }
+  </script>
+    
+  </body>
+</html>

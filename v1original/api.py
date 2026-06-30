@@ -117,8 +117,12 @@ async def api_ocr(
         status_msg, summary, name, dosage, contra, time_list, custom_time_str = agent_ocr_extract(
             image_path, text_input
         )
+        is_medicine = not (
+            str(status_msg or "").startswith("❌") or str(status_msg or "").startswith("⚠️")
+        )
         return {
             "status": status_msg,
+            "is_medicine": is_medicine,
             "summary": summary,
             "name": name,
             "dosage": dosage,
